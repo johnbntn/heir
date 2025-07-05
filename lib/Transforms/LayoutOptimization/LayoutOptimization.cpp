@@ -8,6 +8,7 @@
 #include "lib/Dialect/TensorExt/IR/TensorExtAttributes.h"
 #include "lib/Dialect/TensorExt/IR/TensorExtDialect.h"
 #include "lib/Dialect/TensorExt/IR/TensorExtOps.h"
+#include "lib/Transforms/LayoutOptimization/LayoutConversionCost.h"
 #include "lib/Transforms/LayoutOptimization/Patterns.h"
 #include "lib/Utils/AttributeUtils.h"
 #include "llvm/include/llvm/ADT/STLExtras.h"             // from @llvm-project
@@ -49,8 +50,17 @@ auto &kLayoutAttrName = tensor_ext::TensorExtDialect::kLayoutAttrName;
 
 typedef int64_t Cost;
 
+// keep track of tensor with largest # of slots for layout analysis
+int64_t maxSlots = 0;
+
 // TODO(#1595): Implement a more accurate cost model.
-Cost computeCostOfLayoutConversion(LayoutAttr fromLayout, LayoutAttr toLayout) {
+Cost computeCostOfLayoutConversion(Value value, LayoutAttr fromLayout,
+                                   LayoutAttr toLayout) {
+  LLVM_DEBUG(llvm::dbgs() << "** LOOK HERE **\nFrom layout: "
+                          << fromLayout.getMap()
+                          << "\n To layout: " << toLayout.getMap() << "\n");
+
+  // return layoutAnalysis(value, slots, fromLayout, toLayout);
   return (fromLayout == toLayout) ? 0 : 1;
 }
 
@@ -233,10 +243,19 @@ OperandChange LayoutOptimization::costOfChangedOperand(OpOperand &operand,
     // If the operand came from convert_layout, the cost of the change is
     // (folded conversion - original conversion).
     auto fromLayout = convertLayoutOp.getFromLayout();
+    auto currentValue = convertLayoutOp.getValue();
+    // see if we need to increase slots of estimated ciphertext
+    RankedTensorType currentTensor =
+        cast<RankedTensorType>(currentValue.getType());
+    int64_t valSlots = currentTensor.getShape().back();
+    if (valSlots > maxSlots) {
+      maxSlots = valSlots;
+      LLVM_DEBUG(llvm::dbgs() << "new max slots: " << maxSlots << "\n";);
+    }
     Cost originalConversion = computeCostOfLayoutConversion(
-        fromLayout, convertLayoutOp.getToLayout());
+        currentValue, fromLayout, convertLayoutOp.getToLayout());
     Cost foldedConversion =
-        computeCostOfLayoutConversion(fromLayout, newLayout);
+        computeCostOfLayoutConversion(currentValue, fromLayout, newLayout);
     return OperandChange{fromLayout, newLayout,
                          foldedConversion - originalConversion};
   }
@@ -248,7 +267,7 @@ OperandChange LayoutOptimization::costOfChangedOperand(OpOperand &operand,
   auto originalLayout = cast<LayoutAttr>(originalLayoutResult.value());
   return OperandChange{
       originalLayout, newLayout,
-      computeCostOfLayoutConversion(originalLayout, newLayout)};
+      computeCostOfLayoutConversion(NULL, originalLayout, newLayout)};
 }
 
 Cost LayoutOptimization::costOfChangedResult(Operation *kernel,
@@ -257,9 +276,9 @@ Cost LayoutOptimization::costOfChangedResult(Operation *kernel,
   for (auto user : kernel->getResult(0).getUsers()) {
     if (auto convertLayoutOp = dyn_cast<ConvertLayoutOp>(user)) {
       Cost originalConversion = computeCostOfLayoutConversion(
-          convertLayoutOp.getFromLayout(), convertLayoutOp.getToLayout());
+          NULL, convertLayoutOp.getFromLayout(), convertLayoutOp.getToLayout());
       Cost foldedConversion = computeCostOfLayoutConversion(
-          newLayout, convertLayoutOp.getToLayout());
+          NULL, newLayout, convertLayoutOp.getToLayout());
       totalCost += foldedConversion - originalConversion;
     }
   }

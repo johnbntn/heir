@@ -10,6 +10,7 @@ cc_library(
     srcs = ["LayoutOptimization.cpp"],
     hdrs = ["LayoutOptimization.h"],
     deps = [
+        ":LayoutConversionCost",
         ":Patterns",
         ":pass_inc_gen",
         "@heir//lib/Dialect/Secret/IR:Dialect",
@@ -40,6 +41,18 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "LayoutConversionCost",
+    srcs = ["LayoutConversionCost.cpp"],
+    hdrs = ["LayoutConversionCost.h"],
+    deps = [
+        "@heir//lib/Dialect/TensorExt/IR:Dialect",
+        "@heir//lib/Utils",
+        "@heir//lib/Utils:AttributeUtils",
+        "@llvm-project//llvm:Support",
     ],
 )
 
